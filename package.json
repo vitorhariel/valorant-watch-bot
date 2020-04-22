@@ -7,7 +7,12 @@
     "cheerio": "^1.0.0-rc.3",
     "cli-table": "^0.3.1",
     "dayjs": "^1.8.24",
-    "puppeteer": "^2.1.1"
+    "express": "^4.17.1",
+    "pug": "^2.0.4",
+    "puppeteer": "^2.1.1",
+    "puppeteer-extra": "^3.1.9",
+    "puppeteer-extra-plugin-stealth": "^2.4.9",
+    "socket.io": "^2.3.0"
   },
   "devDependencies": {},
   "scripts": {

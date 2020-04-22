@@ -1,27 +1,51 @@
-const puppeteer = require("puppeteer");
+const puppeteer = require("puppeteer-extra");
+const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+const fs = require("fs");
+const path = require("path");
+const express = require("express");
+const http = require("http");
+const socketio = require("socket.io");
 const cheerio = require("cheerio");
 const dayjs = require("dayjs");
 const relativeTime = require("dayjs/plugin/relativeTime");
 const Table = require("cli-table");
-const { getRandomInt } = require("./config/util");
+const { getRandomInt, twitchCookie } = require("./config/util");
 
+puppeteer.use(StealthPlugin());
 dayjs.extend(relativeTime);
 
 const { variables } = require("./config/variables");
 const accounts = require("./config/accounts.json");
 
-const isHeadless = true;
-let changed = true;
+const app = express();
+const router = express.Router();
+const server = http.createServer(app);
+const io = socketio(server);
+
+app.set("view engine", "pug");
+app.set("views", path.join(__dirname, "views"));
+
+const isHeadless = variables.headless;
+const followChannels = variables.followChannels;
+const lowAudio = variables.lowAudio;
+
 let startTime;
+let updateTimer = -1;
 
 const table = new Table({
-  head: ["Account Name", "Next Streamer", "Watching", "Got Key?"],
-  colWidths: [20, 20, 20, 20],
+  head: ["Account Name", "Token", "Next Streamer", "Watching", "Got Key?"],
+  colWidths: [20, 20, 20, 20, 20],
 });
 
+let lastTable = JSON.stringify(table);
+let filteredAccounts;
+
 (async () => {
-  const instances = await accounts.map(async (token) => {
-    return await newInstance(token);
+  filteredAccounts = accounts.filter((account) => {
+    return !account.dropped && !account.disabled;
+  });
+  const instances = await filteredAccounts.map(async (account) => {
+    return await newInstance(account);
   });
 
   startTime = dayjs();
@@ -37,20 +61,25 @@ const table = new Table({
   });
 })();
 
-async function newInstance(token) {
+async function newInstance({ username, token }) {
   var browser = await puppeteer.launch({
     headless: isHeadless,
     defaultViewport: null,
-    ignoreDefaultArgs: ["--mute-audio"],
-    args: ["--window-size=620,620"],
+    args: [
+      "--window-size=1200,820",
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+    ],
+    executablePath: variables.chromePath || null,
   });
 
   const page = await browser.newPage();
-  await page.setViewport({ width: 620, height: 620 });
+  await page.setViewport({ width: 1200, height: 820 });
   await page.setUserAgent(variables.userAgent);
-  const cookie = { ...variables.cookie, value: token };
+  const cookie = { ...twitchCookie, value: token };
   await page.setCookie(cookie);
-  page.authToken = token;
+  page.username = username;
+  page.token = token;
   return page;
 }
 
@@ -67,17 +96,32 @@ async function checkLogin(instance) {
       'div[data-a-target="profile-username-input"] > input'
     ).val();
 
-    if (username) {
+    if (!instance.username && username) {
+      const accountFileIndex = accounts.findIndex((account) => {
+        return account.token === instance.token;
+      });
+
+      accounts[accountFileIndex].username = username;
       instance.username = username;
-      table.push([username, "", "", ""]);
+      instance.valid = true;
+
+      fs.writeFile(
+        "./config/accounts.json",
+        JSON.stringify(accounts, null, 2),
+        () => {}
+      );
+
+      table.push([username, instance.token, "", "", ""]);
+    } else if (!username) {
+      instance.invalid = true;
+      table.push(["invalid", instance.token, "", "", "is invalid"]);
     } else {
-      table.push([instance.authToken, "is invalid", "", ""]);
+      table.push([username, instance.token, "", "", ""]);
     }
   } catch (error) {
-    table.push([instance.authToken, "went wrong", "", ""]);
+    instance.invalid = true;
+    table.push(["invalid", instance.token, "", "", "is invalid"]);
   }
-
-  changed = true;
 }
 
 async function getStreamers(instance) {
@@ -94,71 +138,168 @@ async function getStreamers(instance) {
   for (var i = 0; i < jquery.length; i++) {
     streamers[i] = jquery[i].attribs.href.split("/")[1];
   }
-  changed = true;
   return streamers;
 }
 
 async function selectStreamer(instance, streamers) {
-  const accountIndex = table.findIndex((a) => a[0] === instance.username);
-
-  let last_refresh = dayjs();
-  let next_refresh = dayjs().add(1, "hour");
-
-  while (true) {
-    let watching;
-
-    if (dayjs(next_refresh).isBefore(last_refresh)) {
-      streamers = await getAllStreamer(instance);
-      last_refresh = dayjs();
-    }
-
-    while (!watching) {
-      watching = streamers[getRandomInt(0, streamers.length)];
-    }
-
-    const minute = getRandomInt(10, 15);
-    const sleep = minute * 60000;
-
-    let next_streamer = dayjs().add(minute, "minute").format("HH:mm:ss");
-
-    await instance.goto(variables.baseURL + watching, { timeout: 0 });
-
-    const bodyHTML = await instance.evaluate(() => document.body.innerHTML);
-    const $ = cheerio.load(bodyHTML);
-    const notification = $(
-      'div[data-test-selector="onsite-notifications__badge"]'
+  if (!instance.invalid) {
+    const accountTableIndex = table.findIndex(
+      (account) => account[0] === instance.username
     );
 
-    table[accountIndex][2] = watching;
-    table[accountIndex][1] = next_streamer;
+    let alive = true;
+    let last_refresh = dayjs();
+    let next_refresh = dayjs().add(1, "hour");
 
-    if (notification.length) {
-      table[accountIndex][3] = "YES!";
-    } else {
-      table[accountIndex][3] = "Not yet";
+    while (alive) {
+      let watching;
+
+      if (dayjs(next_refresh).isBefore(last_refresh)) {
+        streamers = await getAllStreamer(instance);
+        last_refresh = dayjs();
+      }
+
+      while (!watching) {
+        watching = streamers[getRandomInt(0, streamers.length)];
+      }
+
+      const minute = getRandomInt(10, 15);
+      const sleep = minute * 60000;
+
+      let next_streamer = dayjs().add(minute, "minute").format("HH:mm:ss");
+
+      await instance.goto(variables.baseURL + watching, { timeout: 0 });
+
+      const bodyHTML = await instance.evaluate(() => document.body.innerHTML);
+      const $ = cheerio.load(bodyHTML);
+
+      table[accountTableIndex][2] = next_streamer;
+      table[accountTableIndex][3] = watching;
+
+      const btnNotification = await instance.$(
+        'button[aria-label="Open Notifications"]'
+      );
+      await btnNotification.evaluate((btn) => {
+        btn.click();
+      });
+
+      await instance.waitForSelector(
+        'div[role="dialog"] .tw-loading-spinner__circle',
+        { hidden: true }
+      );
+
+      const dropNotification = await instance.$(
+        'span[title="You just received the VALORANT Drop for watching Riot Games play VALORANT."]'
+      );
+
+      const accountFileIndex = accounts.findIndex((account) => {
+        return account.token === instance.token;
+      });
+
+      if (dropNotification) {
+        accounts[accountFileIndex].dropped = true;
+
+        fs.writeFile(
+          "./config/accounts.json",
+          JSON.stringify(accounts, null, 2),
+          () => {}
+        );
+
+        table[accountTableIndex][2] = "--";
+        table[accountTableIndex][3] = "--";
+        table[accountTableIndex][4] = "YES!";
+
+        alive = false;
+        await instance.browser().close();
+      } else {
+        accounts[accountFileIndex].dropped = false;
+
+        fs.writeFile(
+          "./config/accounts.json",
+          JSON.stringify(accounts, null, 2),
+          () => {}
+        );
+
+        table[accountTableIndex][4] = "Not yet";
+
+        await setLowestQuality(instance);
+        await instance.waitFor(sleep);
+      }
     }
-
-    changed = true;
-    await instance.waitFor(sleep);
+  } else {
+    await instance.browser().close();
   }
 }
 
-setInterval(
-  () => {
-    console.clear();
+async function setLowestQuality(instance) {
+  const btnFollow = await instance.$('button[data-a-target="follow-button"]');
+  if (btnFollow && followChannels) {
+    await btnFollow.evaluate((btn) => btn.click());
+  }
+
+  if (lowAudio) {
+    instance.$eval("video", (video) => {
+      setInterval(function () {
+        if (video.volume !== 0.01) video.volume = 0.01;
+      }, 1000);
+    });
+  }
+
+  const btnMatureAccept = await instance.$(
+    'button[data-a-target="player-overlay-mature-accept"]'
+  );
+  if (btnMatureAccept) {
+    await btnMatureAccept.evaluate((btn) => btn.click());
+  }
+
+  await instance
+    .$('button[data-a-target="player-settings-button"]')
+    .then((btn) =>
+      btn.evaluate((btn) => {
+        btn.click();
+      })
+    )
+    .catch((err) => {});
+
+  await instance
+    .$('button[data-a-target="player-settings-menu-item-quality"]')
+    .then((btn) =>
+      btn.evaluate((btn) => {
+        btn.click();
+      })
+    )
+    .catch((err) => {});
+
+  await instance
+    .$(
+      'div[data-a-target="player-settings-menu"] > div.tw-pd-05:last-child input'
+    )
+    .then((btn) =>
+      btn.evaluate((btn) => {
+        btn.click();
+      })
+    )
+    .catch((err) => {});
+}
+
+setInterval(() => {
+  if (
+    JSON.stringify(table) !== lastTable ||
+    (updateTimer >= 60 && table.length > 0) ||
+    updateTimer === -1
+  ) {
+    // console.clear();
 
     const timeRunning = dayjs(startTime).fromNow();
 
     if (table.length > 0) {
       console.log(`Running since ${timeRunning}...\n`);
-      // console.log(table);
-
       console.log(table.toString());
 
-      if (table.length !== accounts.length) {
+      if (table.length !== filteredAccounts.length) {
         console.log(
           `Still trying to load ${
-            accounts.length - table.length
+            filteredAccounts.length - table.length
           } other account(s)...`
         );
       }
@@ -166,7 +307,25 @@ setInterval(
       console.log("Loading accounts...");
     }
 
-    changed = false;
-  },
-  changed ? 1000 : 5000
-);
+    io.emit("update", {
+      table: table,
+    });
+
+    lastTable = JSON.stringify(table);
+    updateTimer = 0;
+  }
+  updateTimer += 1;
+}, 1000);
+
+io.on("connection", () => {
+  io.emit("update", {
+    table: table,
+  });
+});
+
+router.get("/", (req, res) => {
+  res.render("index");
+});
+
+app.use(router);
+server.listen(3000);
