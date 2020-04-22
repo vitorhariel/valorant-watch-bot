@@ -1,5 +1,5 @@
 const variables = {
-  headless: true,
+  headless: false,
   followChannels: true,
   lowAudio: true,
   baseURL: "https://twitch.tv/",

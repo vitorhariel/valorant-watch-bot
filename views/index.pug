@@ -1,3 +1,4 @@
+doctype html
 html
   head
     title Valorant Bot Status
@@ -5,6 +6,7 @@ html
     script(src='https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.3.0/socket.io.js')
     script(src='https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.0/jquery.min.js')
     script(src='https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.4.1/semantic.min.js')
+    script(src='https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.24.0/moment.min.js')
     meta(name='viewport', content='width=device-width, initial-scale=1.0')
   body
     div.ui.container(style='padding-top: 30px')
@@ -18,31 +20,65 @@ html
             th Watching
             th Got Key?
         tbody
-      div
+      div(style='display: flex; align-items: center; justify-content: space-between;')
         p(id='status') Last updated: #[span(id='time') 0 second(s) ago.]
+        div
+          button.ui.primary.button(onclick='reload()') Reload
+          button.ui.negative.button(style='margin: 0' onclick='restart()') Restart
+      div.ui.piled.segment
+        h3 Add new account
+        div.ui.action.input(id='auth-token-div')
+          input(type='text', id='auth-token' placeholder='Auth Token')
+          button.ui.primary.button(onclick='addAccount()') Adicionar
   script.
     var socket = io();
-    let time = 0;
     let status;
+    let updateTime = moment();
+    moment.relativeTimeThreshold('ss', 1);
+
+    moment.fn.fromNowOrNow = function (a) {
+      if (Math.abs(moment().diff(this)) < 1000) {
+        return 'just now';
+      }
+      return this.fromNow(a);
+    }
+
     socket.on('connect', () => {
       if (status) {
-        time = 0;
         $('#status').html(status);
       }
     })
-    socket.on('disconnect', () => {
-      status = $('#status').html();
-      $('#status').html('Offline');
-    })
-    socket.on('update', ({ table }) => {
-      time = 0;
 
-      if (!table.length && !($('[id^="id"]'))) {
-        const row = $('<tr id="loading"></tr>');
-        row.append('<td>Loading...<td>');
+    socket.on('disconnect', () => {
+      $('td[id="token"]').each((index, elem) => {
+        $(elem).parent().remove();
+      });
+
+      if ($('#table_status').length) {
+        $('#table_status').remove();
+      }
+
+      const row = $('<tr id="table_status"></tr>');
+      row.append('<td colspan="4">Connection lost...</td>');
+      $('tbody').append(row);
+      status = $('#status').html();
+      $('#status').html('Disconnected');
+    })
+
+    socket.on('update', ({ table }) => {
+      updateTime = moment();
+      updateTimeString();
+
+      if ($('#table_status').length) {
+        $('#table_status').remove();
+      }
+
+      if (!table.length && !($('[id^="id"]').length)) {
+        const row = $('<tr id="table_status"></tr>');
+        row.append('<td colspan="4">Loading...</td>');
         $('tbody').append(row);
-      } else {
-        const loading = $('#loading');
+      } else if (table.length) {
+        const loading = $('#table_status');
         if (loading) {
           loading.remove();
         }
@@ -50,27 +86,84 @@ html
 
       for (i in table) {
         if (!isNaN(i)) {
-          const found = $('tr#id_' + i);
+          const token = table[i][1];
+          const found = ($(`td:contains(${token})`));
+
           if (found.length) {
-            $('tr#id_' + i).find('#name').html(table[i][0]);
-            $('tr#id_' + i).find('#token').html(table[i][1]);
-            $('tr#id_' + i).find('#next').html(table[i][2]);
-            $('tr#id_' + i).find('#watching').html(table[i][3]);
-            $('tr#id_' + i).find('#gotkey').html(table[i][4]);
+            const parentTr = found.parent();
+            $(parentTr).find('#name').html(table[i][0]);
+            $(parentTr).find('#token').html(table[i][1]);
+            $(parentTr).find('#next').html(table[i][2]);
+            $(parentTr).find('#watching').html(table[i][3]);
+            $(parentTr).find('#gotkey').html(table[i][4]);
           } else {
-            const row = $('<tr id="id_' + i + '"></tr>');
+            const row = $(`<tr id="id_${i}"></tr>`);
             row.append(`<td id="name">${table[i][0]}</td>`);
-            row.append('<td id="token">' + table[i][1] + '</td>');
-            row.append('<td id="next">' + table[i][2] + '</td>');
-            row.append('<td id="watching">' + table[i][3] + '</td>');
-            row.append('<td id="gotkey">' + table[i][4] + '</td>');
+            row.append(`<td id="token">${table[i][1]}</td>`);
+            row.append(`<td id="next">${table[i][2]}</td>`);
+            row.append(`<td id="watching">${table[i][3]}</td>`);
+            row.append(`<td id="gotkey">${table[i][4]}</td>`);
             $('tbody').append(row);
           }
         }
       }
+
+      $('td[id="token"]').each((index, elem) => {
+        for (i in table) {
+          if (!isNaN(i) && table[i][1] === $(elem).html()) {
+            return false;
+          }
+            $(elem).parent().remove();
+        }
+      });
+
     });
 
+    socket.on('restarting', () => {
+      $('td[id="token"]').each((index, elem) => {
+        $(elem).parent().remove();
+      });
+
+      if ($('#table_status').length) {
+        $('#table_status').remove();
+      }
+
+      const row = $('<tr id="table_status"></tr>');
+      row.append('<td colspan="4">Restarting...</td>');
+      $('tbody').append(row);
+    })
+
+    function reload() {
+      socket.emit('request_update');
+    }
+
+    function restart() {
+      const confirmed = confirm('Are you sure you want to restart the bot? This may cause some issues.\n\nConsider waiting for all accounts to be running.');
+      if (confirmed) {
+        socket.emit('request_restart');
+      }
+    }
+
+    function addAccount() {
+      const authTokenInput = $('#auth-token');
+      const authTokenInputVal = authTokenInput.val();
+
+      if (authTokenInputVal.length !== 30) {
+        $('#auth-token-div').addClass('error');
+      } else {
+        authTokenInput.val('');
+        socket.emit('add_account', authTokenInputVal);
+      }
+    }
+
+    $("#auth-token-div").focusin(() => {
+      $('#auth-token-div').removeClass('error');
+    });
+
+    function updateTimeString() {
+      $('#time').html(moment(updateTime).fromNowOrNow());
+    }
+
     setInterval(() => {
-      $('#time').html(time + ' second(s) ago.');
-      time += 1;
-    }, 1000);
+      updateTimeString();
+    }, 1000)

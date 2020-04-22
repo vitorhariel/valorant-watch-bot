@@ -31,6 +31,8 @@ const lowAudio = variables.lowAudio;
 
 let startTime;
 let updateTimer = -1;
+let lengthAccounts;
+let instances = [];
 
 const table = new Table({
   head: ["Account Name", "Token", "Next Streamer", "Watching", "Got Key?"],
@@ -40,26 +42,37 @@ const table = new Table({
 let lastTable = JSON.stringify(table);
 let filteredAccounts;
 
-(async () => {
+async function startBot() {
+  startTime = dayjs();
+
   filteredAccounts = accounts.filter((account) => {
     return !account.dropped && !account.disabled;
   });
-  const instances = await filteredAccounts.map(async (account) => {
+  lengthAccounts = filteredAccounts.length;
+
+  startInstances(filteredAccounts);
+}
+
+startBot();
+
+async function startInstances(accounts) {
+  const startingInstances = await accounts.map(async (account) => {
     return await newInstance(account);
   });
 
-  startTime = dayjs();
-
-  Promise.all(instances).then((array) => {
-    array.forEach((instance) => {
-      setTimeout(async () => {
-        await checkLogin(instance);
-        const streamers = await getStreamers(instance);
-        await selectStreamer(instance, streamers);
-      }, 5000);
-    });
-  });
-})();
+  Promise.all(startingInstances)
+    .then((array) => {
+      array.forEach((instance, index) => {
+        setTimeout(async () => {
+          instances.push(instance);
+          await checkLogin(instance);
+          const streamers = await getStreamers(instance);
+          await selectStreamer(instance, streamers);
+        }, 5000 + index * 500);
+      });
+    })
+    .catch(() => {});
+}
 
 async function newInstance({ username, token }) {
   var browser = await puppeteer.launch({
@@ -84,43 +97,48 @@ async function newInstance({ username, token }) {
 }
 
 async function checkLogin(instance) {
-  try {
-    await instance.goto(variables.profileURL, {
-      waitUntil: "networkidle0",
-      timeout: 0,
+  await instance.goto(variables.profileURL, {
+    waitUntil: "networkidle0",
+    timeout: 0,
+  });
+
+  const bodyHTML = await instance.evaluate(() => document.body.innerHTML);
+  const $ = cheerio.load(bodyHTML);
+  const username = $(
+    'div[data-a-target="profile-username-input"] > input'
+  ).val();
+
+  if (!instance.username && username) {
+    const accountFileIndex = accounts.findIndex((account) => {
+      return account.token === instance.token;
     });
 
-    const bodyHTML = await instance.evaluate(() => document.body.innerHTML);
-    const $ = cheerio.load(bodyHTML);
-    const username = $(
-      'div[data-a-target="profile-username-input"] > input'
-    ).val();
-
-    if (!instance.username && username) {
-      const accountFileIndex = accounts.findIndex((account) => {
-        return account.token === instance.token;
-      });
-
+    if (accountFileIndex !== -1) {
       accounts[accountFileIndex].username = username;
       instance.username = username;
       instance.valid = true;
-
-      fs.writeFile(
-        "./config/accounts.json",
-        JSON.stringify(accounts, null, 2),
-        () => {}
-      );
-
-      table.push([username, instance.token, "", "", ""]);
-    } else if (!username) {
-      instance.invalid = true;
-      table.push(["invalid", instance.token, "", "", "is invalid"]);
     } else {
-      table.push([username, instance.token, "", "", ""]);
+      const newAccount = {
+        username,
+        token: instance.token,
+      };
+      accounts.push(newAccount);
+      instance.username = username;
+      lengthAccounts += 1;
     }
-  } catch (error) {
+
+    fs.writeFile(
+      "./config/accounts.json",
+      JSON.stringify(accounts, null, 2),
+      () => {}
+    );
+
+    table.push([username, instance.token, "", "", ""]);
+  } else if (!username) {
     instance.invalid = true;
     table.push(["invalid", instance.token, "", "", "is invalid"]);
+  } else {
+    table.push([username, instance.token, "", "", ""]);
   }
 }
 
@@ -233,7 +251,7 @@ async function selectStreamer(instance, streamers) {
 
 async function setLowestQuality(instance) {
   const btnFollow = await instance.$('button[data-a-target="follow-button"]');
-  if (btnFollow && followChannels) {
+  if (btnFollow && followChannels && getRandomInt(0, 10) % 2 === 0) {
     await btnFollow.evaluate((btn) => btn.click());
   }
 
@@ -282,6 +300,25 @@ async function setLowestQuality(instance) {
     .catch((err) => {});
 }
 
+function addAccount(token) {
+  const accountData = {
+    token,
+  };
+
+  startInstances([accountData]);
+}
+
+function restartBot() {
+  io.emit("restarting");
+  new Promise((resolve, reject) => {
+    instances.forEach(async (instance, index, array) => {
+      await instance.browser().close();
+      table.length = 0;
+      if (index === array.length - 1) resolve();
+    });
+  }).then(() => startBot());
+}
+
 setInterval(() => {
   if (
     JSON.stringify(table) !== lastTable ||
@@ -296,10 +333,10 @@ setInterval(() => {
       console.log(`Running since ${timeRunning}...\n`);
       console.log(table.toString());
 
-      if (table.length !== filteredAccounts.length) {
+      if (table.length !== lengthAccounts) {
         console.log(
           `Still trying to load ${
-            filteredAccounts.length - table.length
+            lengthAccounts - table.length
           } other account(s)...`
         );
       }
@@ -317,9 +354,24 @@ setInterval(() => {
   updateTimer += 1;
 }, 1000);
 
-io.on("connection", () => {
-  io.emit("update", {
+io.on("connection", (socket) => {
+  socket.emit("update", {
     table: table,
+  });
+
+  socket.on("request_update", () => {
+    socket.emit("update", {
+      table: table,
+    });
+  });
+
+  socket.on("request_restart", () => {
+    console.log("Restarting...");
+    restartBot();
+  });
+
+  socket.on("add_account", (token) => {
+    addAccount(token);
   });
 });
 
