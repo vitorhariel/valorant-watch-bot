@@ -3,15 +3,21 @@ html
   head
     title Valorant Bot Status
     link(rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.4.1/semantic.min.css')
+    link(rel='stylesheet' href='css/micromodal.css')
+    link(rel='stylesheet' href='css/toasty.min.css')
     script(src='https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.3.0/socket.io.js')
     script(src='https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.0/jquery.min.js')
     script(src='https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.4.1/semantic.min.js')
     script(src='https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.24.0/moment.min.js')
+    script(src='js/micromodal.min.js')
     meta(name='viewport', content='width=device-width, initial-scale=1.0')
-  body
-    div.ui.container(style='padding-top: 30px')
-      h1.ui.center.aligned.header Valorant Bot
-      table.ui.celled.table
+  body(style='background-color: #EAEEF2;')
+    div.ui.secondary.pointing.menu(style='height: 50px; background-color: #fff;')
+      div.ui.container
+        a.header.item Valorant Bot
+        a.item.active Home
+    div.ui.container(style='padding-top: 50px; margin: auto')
+      table.ui.celled.striped.table
         thead
           tr
             th Account Name
@@ -19,22 +25,46 @@ html
             th Next Streamer
             th Watching
             th Got Key?
+            th Actions
         tbody
-      div(style='display: flex; align-items: center; justify-content: space-between;')
-        p(id='status') Last updated: #[span(id='time') 0 second(s) ago.]
-        div
-          button.ui.primary.button(onclick='reload()') Reload
-          button.ui.negative.button(style='margin: 0' onclick='restart()') Restart
+        tfoot.full-width
+          tr
+            th(colspan='6')
+              div(style='display: flex; justify-content: space-between; justify-items: center; align-items: center;')
+                p(id='status' style='margin: 0') Last updated: #[span(id='time') 0 second(s) ago.]
+                div
+                  button.ui.primary.button.right.floated(style='margin-left: 5px;' onclick='reload()') Reload
+                  button.ui.negative.button.right.floated(onclick='restart()') Restart
       div.ui.piled.segment
         h3 Add new account
         div.ui.action.input(id='auth-token-div')
           input(type='text', id='auth-token' placeholder='Auth Token')
           button.ui.primary.button(onclick='addAccount()') Adicionar
+      div.modal.micromodal-slide(id='modal-screenshot' aria-hidden='true')
+        div.modal__overlay(tabindex='-1' data-micromodal-close)
+          div.modal__container(role='dialog' aria-modal='true' aria-labelledby='modal-screenshot-title')
+            header.modal__header
+              h2.modal__title(id='modal-screenshot-title') Screenshot
+              button.modal__close(aria-label='Close modal' data-micromodal-close)
+            div.modal__content(id='modal-screenshot-content')
+              img.modal__screenshot__image(id='modal-screenshot-image' src='')
+              a(id='modal-screenshot-newtab' href='#' target='_blank') Open in a new tab
+  script(src='js/toasty.min.js')
   script.
+    let toast = new Toasty({
+      classname: 'alert',
+      transition: "scale",
+      progressBar: true,
+      insertBefore: false,
+      prependTo: document.body.childNodes[1]
+    });
     var socket = io();
     let status;
     let updateTime = moment();
+    let loading_screenshot = false;
+    let loading_delete = false;
     moment.relativeTimeThreshold('ss', 1);
+    MicroModal.init();
 
     moment.fn.fromNowOrNow = function (a) {
       if (Math.abs(moment().diff(this)) < 1000) {
@@ -50,7 +80,7 @@ html
     })
 
     socket.on('disconnect', () => {
-      $('td[id="token"]').each((index, elem) => {
+      $('td[name="token"]').each((index, elem) => {
         $(elem).parent().remove();
       });
 
@@ -59,7 +89,7 @@ html
       }
 
       const row = $('<tr id="table_status"></tr>');
-      row.append('<td colspan="4">Connection lost...</td>');
+      row.append('<td colspan="6">Waiting...</td>');
       $('tbody').append(row);
       status = $('#status').html();
       $('#status').html('Disconnected');
@@ -75,7 +105,7 @@ html
 
       if (!table.length && !($('[id^="id"]').length)) {
         const row = $('<tr id="table_status"></tr>');
-        row.append('<td colspan="4">Loading...</td>');
+        row.append('<td colspan="6">Waiting...</td>');
         $('tbody').append(row);
       } else if (table.length) {
         const loading = $('#table_status');
@@ -91,24 +121,28 @@ html
 
           if (found.length) {
             const parentTr = found.parent();
-            $(parentTr).find('#name').html(table[i][0]);
-            $(parentTr).find('#token').html(table[i][1]);
-            $(parentTr).find('#next').html(table[i][2]);
-            $(parentTr).find('#watching').html(table[i][3]);
-            $(parentTr).find('#gotkey').html(table[i][4]);
+            $(parentTr).find('td[name="name"]').html(table[i][0]);
+            $(parentTr).find('td[name="token"]').html(table[i][1]);
+            $(parentTr).find('td[name="next"]').html(table[i][2]);
+            $(parentTr).find('td[name="watching"]').html(table[i][3]);
+            $(parentTr).find('td[name="gotkey"]').html(table[i][4]);
           } else {
             const row = $(`<tr id="id_${i}"></tr>`);
-            row.append(`<td id="name">${table[i][0]}</td>`);
-            row.append(`<td id="token">${table[i][1]}</td>`);
-            row.append(`<td id="next">${table[i][2]}</td>`);
-            row.append(`<td id="watching">${table[i][3]}</td>`);
-            row.append(`<td id="gotkey">${table[i][4]}</td>`);
+            row.append(`<td name="name">${table[i][0]}</td>`);
+            row.append(`<td name="token">${table[i][1]}</td>`);
+            row.append(`<td name="next">${table[i][2]}</td>`);
+            row.append(`<td name="watching">${table[i][3]}</td>`);
+            row.append(`<td name="gotkey">${table[i][4]}</td>`);
+            const actions = $(`<td name="action-${table[i][1]}"></td>`);
+            actions.append(`<i class="circular inverted link camera icon" onclick="requestScreenshot('${table[i][1]}')" name="request_screenshot"></i>`);
+            actions.append(`<i class="circular inverted link trash red icon" onclick="requestDelete('${table[i][1]}')" name="request_delete"></i>`);
+            row.append(actions);
             $('tbody').append(row);
           }
         }
       }
 
-      $('td[id="token"]').each((index, elem) => {
+      $('td[name="token"]').each((index, elem) => {
         for (i in table) {
           if (!isNaN(i) && table[i][1] === $(elem).html()) {
             return false;
@@ -117,14 +151,17 @@ html
         }
       });
 
+      checkIfGotKey();
     });
 
     socket.on('restarting', () => {
-      $('td[id="token"]').each((index, elem) => {
+      toast.info("Restarting...");
+      $('td[name="token"]').each((index, elem) => {
         $(elem).parent().remove();
       });
 
       if ($('#table_status').length) {
+        console.log('4..')
         $('#table_status').remove();
       }
 
@@ -133,13 +170,49 @@ html
       $('tbody').append(row);
     })
 
+    socket.on('deliver_screenshot', ({screenshot_id, token}) => {
+      $('#modal-screenshot-image').attr("src", `./screenshots/${screenshot_id}.png?t=${new Date().getTime()}`);
+      $('#modal-screenshot-newtab').attr("href", `./screenshots/${screenshot_id}.png`);
+      MicroModal.show('modal-screenshot');
+
+      const icon = $(`td[name="action-${token}"] > i[name*="request_screenshot"]`);
+      icon.removeClass('spinner loading');
+      icon.addClass('camera');
+      loading_screenshot = false;
+    })
+
+    socket.on('deliver_delete', (token) => {
+      $('td[name="token"]').each((i, element) => {
+        if (element.textContent === token) {
+          const username = $(element).parent().children('td[name="name"]').text();
+          if (username) {
+            toast.success(`${username} was deleted`);
+          } else {
+            toast.success(`${token} was deleted`);
+          }
+
+          $(element).parent().remove();
+          loading_delete = false;
+        }
+      })
+    })
+
+    socket.on('browser_disconnected', (token) => {
+      toast.error(`${token} was disconnected...`);
+    })
+
+
     function reload() {
+      toast.info(`Reloading...`);
       socket.emit('request_update');
     }
 
     function restart() {
       const confirmed = confirm('Are you sure you want to restart the bot? This may cause some issues.\n\nConsider waiting for all accounts to be running.');
       if (confirmed) {
+        $('td[name="token"]').each((index, elem) => {
+          $(elem).parent().remove();
+        });
         socket.emit('request_restart');
       }
     }
@@ -151,8 +224,36 @@ html
       if (authTokenInputVal.length !== 30) {
         $('#auth-token-div').addClass('error');
       } else {
+        toast.info("Adding new account...");
         authTokenInput.val('');
         socket.emit('add_account', authTokenInputVal);
+      }
+    }
+
+    function requestScreenshot(token) {
+      toast.info("Requesting screenshot...");
+      if (!loading_screenshot) {
+        loading_screenshot = true;
+        socket.emit('request_screenshot', token);
+
+        const icon = $(`td[name="action-${token}"] > i[name*="request_screenshot"]`);
+        icon.addClass('spinner loading');
+        icon.removeClass('camera');
+      }
+    }
+
+    function requestDelete(token) {
+      const confirm = prompt('Are you sure you want to delete this account?\n\nType "YES" in the box bellow:');
+      if (confirm === 'YES') {
+        toast.info("Deleting account...");
+        if (!loading_delete) {
+          loading_delete = true;
+          socket.emit('request_delete', token);
+
+          const icon = $(`td[name="action-${token}"] > i[name*="request_delete"]`);
+          icon.addClass('spinner loading');
+          icon.removeClass('trash');
+        }
       }
     }
 
@@ -162,6 +263,16 @@ html
 
     function updateTimeString() {
       $('#time').html(moment(updateTime).fromNowOrNow());
+    }
+
+    function checkIfGotKey() {
+      $('td[name="gotkey"]').each((i, element) => {
+        if (element.textContent === 'Yes') {
+          $(element).css("font-weight", "Bold");
+          const username = $(element).parent().children('td[name="name"]').text();
+          toast.success(`${username} got a key!`)
+        }
+      })
     }
 
     setInterval(() => {

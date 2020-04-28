@@ -1,11 +1,13 @@
 const variables = {
-  headless: false,
+  headless: true,
   followChannels: true,
   lowAudio: true,
   baseURL: "https://twitch.tv/",
   profileURL: "https://www.twitch.tv/settings/profile",
   streamersUrl:
     "https://www.twitch.tv/directory/game/VALORANT?tl=c2542d6d-cd10-4532-919b-3d19f30a768b",
+  fixedStream: false,
+  fixedStreamName: "strikeg_br",
   chromePath:
     "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
   userAgent:

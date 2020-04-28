@@ -24,6 +24,7 @@ const io = socketio(server);
 
 app.set("view engine", "pug");
 app.set("views", path.join(__dirname, "views"));
+app.use(express.static("public"));
 
 const isHeadless = variables.headless;
 const followChannels = variables.followChannels;
@@ -86,6 +87,15 @@ async function newInstance({ username, token }) {
     executablePath: variables.chromePath || null,
   });
 
+  browser.on("disconnected", () => {
+    console.log(`${username ? username : token} disconnected`);
+    io.on("connection", (socket) => {
+      socket.emit("browser_disconnected", {
+        token,
+      });
+    });
+  });
+
   const page = await browser.newPage();
   await page.setViewport({ width: 1200, height: 820 });
   await page.setUserAgent(variables.userAgent);
@@ -108,38 +118,40 @@ async function checkLogin(instance) {
     'div[data-a-target="profile-username-input"] > input'
   ).val();
 
-  if (!instance.username && username) {
-    const accountFileIndex = accounts.findIndex((account) => {
-      return account.token === instance.token;
-    });
+  const accountFileIndex = accounts.findIndex((account) => {
+    return account.token === instance.token;
+  });
 
+  if (!instance.username && username) {
     if (accountFileIndex !== -1) {
       accounts[accountFileIndex].username = username;
+      accounts[accountFileIndex].disabled = false;
       instance.username = username;
       instance.valid = true;
     } else {
       const newAccount = {
         username,
         token: instance.token,
+        disabled: false,
       };
       accounts.push(newAccount);
       instance.username = username;
-      lengthAccounts += 1;
     }
-
-    fs.writeFile(
-      "./config/accounts.json",
-      JSON.stringify(accounts, null, 2),
-      () => {}
-    );
 
     table.push([username, instance.token, "", "", ""]);
   } else if (!username) {
     instance.invalid = true;
     table.push(["invalid", instance.token, "", "", "is invalid"]);
   } else {
+    accounts[accountFileIndex].disabled = false;
     table.push([username, instance.token, "", "", ""]);
   }
+
+  fs.writeFile(
+    "./config/accounts.json",
+    JSON.stringify(accounts, null, 2),
+    () => {}
+  );
 }
 
 async function getStreamers(instance) {
@@ -172,13 +184,17 @@ async function selectStreamer(instance, streamers) {
     while (alive) {
       let watching;
 
-      if (dayjs(next_refresh).isBefore(last_refresh)) {
-        streamers = await getAllStreamer(instance);
-        last_refresh = dayjs();
-      }
+      if (variables.fixedStream) {
+        watching = variables.fixedStreamName;
+      } else {
+        if (dayjs(next_refresh).isBefore(last_refresh)) {
+          streamers = await getAllStreamer(instance);
+          last_refresh = dayjs();
+        }
 
-      while (!watching) {
-        watching = streamers[getRandomInt(0, streamers.length)];
+        while (!watching) {
+          watching = streamers[getRandomInt(0, streamers.length)];
+        }
       }
 
       const minute = getRandomInt(10, 15);
@@ -305,11 +321,13 @@ function addAccount(token) {
     token,
   };
 
+  lengthAccounts += 1;
   startInstances([accountData]);
 }
 
 function restartBot() {
   io.emit("restarting");
+  table.length = 0;
   new Promise((resolve, reject) => {
     instances.forEach(async (instance, index, array) => {
       await instance.browser().close();
@@ -317,6 +335,48 @@ function restartBot() {
       if (index === array.length - 1) resolve();
     });
   }).then(() => startBot());
+}
+
+async function screenshot(token) {
+  const accountTableIndex = instances.findIndex(
+    (instance) => instance.token === token
+  );
+
+  const screenshot_id = token;
+  const path = `public/screenshots/${screenshot_id}.png`;
+
+  fs.unlink(path, async (err) => {
+    await instances[accountTableIndex]
+      .screenshot({
+        path,
+      })
+      .then(() => io.emit("deliver_screenshot", { screenshot_id, token }));
+  });
+}
+
+async function deleteAccount(token) {
+  const accountFileIndex = accounts.findIndex((account) => {
+    return account.token === token;
+  });
+
+  const accountInstanceIndex = instances.findIndex(
+    (instance) => instance.token === token
+  );
+
+  console.log(`deleting ${token}`);
+
+  await instances[accountInstanceIndex].browser().close();
+  accounts[accountFileIndex].disabled = true;
+
+  fs.writeFile(
+    "./config/accounts.json",
+    JSON.stringify(accounts, null, 2),
+    () => {}
+  );
+
+  table.splice(accountInstanceIndex, 1);
+  lengthAccounts -= 1;
+  io.emit("deliver_delete", token);
 }
 
 setInterval(() => {
@@ -345,7 +405,7 @@ setInterval(() => {
     }
 
     io.emit("update", {
-      table: table,
+      table: table.length >= 1 ? table : [],
     });
 
     lastTable = JSON.stringify(table);
@@ -356,12 +416,12 @@ setInterval(() => {
 
 io.on("connection", (socket) => {
   socket.emit("update", {
-    table: table,
+    table: table.length >= 1 ? table : [],
   });
 
   socket.on("request_update", () => {
     socket.emit("update", {
-      table: table,
+      table: table.length >= 1 ? table : [],
     });
   });
 
@@ -372,6 +432,14 @@ io.on("connection", (socket) => {
 
   socket.on("add_account", (token) => {
     addAccount(token);
+  });
+
+  socket.on("request_screenshot", (token) => {
+    screenshot(token);
+  });
+
+  socket.on("request_delete", (token) => {
+    deleteAccount(token);
   });
 });
 
