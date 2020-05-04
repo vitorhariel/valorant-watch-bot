@@ -1,0 +1,57 @@
+script(src='js/toastr.min.js')
+script.
+  let socket = io();
+  let defaultConfig;
+
+  function setConfigCheckbox() {
+    $('#follow-channels').checkbox(#{variables.followChannels} ? 'check' : 'uncheck');
+    $('#low-audio').checkbox(#{variables.lowAudio} ? 'check' : 'uncheck');
+    $('#fixed-stream').checkbox(#{variables.fixedStream} ? 'check' : 'uncheck');
+    $('#enable-db').checkbox(#{variables.enableDb} ? 'check' : 'uncheck');
+  }
+
+  function checkIfFixedStreamIsChecked() {
+    if ($('#fixed-stream').checkbox('is checked')) {
+      $('input[name="fixed-stream-name"]').parent().removeClass('disabled');
+    } else {
+      $('input[name="fixed-stream-name"]').parent().addClass('disabled');
+    }
+  }
+
+  function saveChanges() {
+    const data = {};
+
+    data.maxInstances = parseInt($('#max-instances').val());
+    data.enableDb = $('#enable-db').checkbox('is checked');
+    data.followChannels = $('#follow-channels').checkbox('is checked');
+    data.lowAudio = $('#low-audio').checkbox('is checked');
+    data.baseUrl = $('#base-url').val();
+    data.profileUrl = $('#profile-url').val();
+    data.streamersUrl = $('#streamers-url').val();
+    data.fixedStream = $('#fixed-stream').checkbox('is checked');
+    data.fixedStreamName = data.fixedStream ? $('#fixed-stream-name').val() : '';
+    data.chromePath = $('#chrome-path').val();
+    data.userAgent = $('#user-agent').val();
+
+    $('#save-changes').html('<i class="spinner icon loading"></i>');
+
+    socket.emit('request_config_changes', data);
+  }
+
+  function resetChanges() {
+    $('form').html(defaultConfig);
+    setConfigCheckbox();
+  }
+
+  socket.on('deliver_config_changes', () => {
+    setTimeout(() => {
+      toastr.success('The changes have been saved')
+      $('#save-changes').html('Save Changes');
+    }, 500)
+  });
+
+  (() => {
+    setConfigCheckbox();
+    checkIfFixedStreamIsChecked();
+    defaultConfig = $('form').html();
+  })()

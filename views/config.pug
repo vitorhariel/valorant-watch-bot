@@ -1,0 +1,55 @@
+doctype html
+html
+  head
+    title Valorant Bot Status
+    link(rel='stylesheet' href='css/config.css')
+    meta(name='viewport', content='width=device-width, initial-scale=1.0')
+    include scripts/config-header.js.pug
+  body
+    include elements/header.pug
+    div.ui.container.main
+      form.ui.form
+        div.field
+          label Max Instances
+          div.ui.input
+            input(type='number' name='max-instances' id='max-instances' value=(variables.maxInstances))
+        div.field
+          label Base Url
+          input(type='text' name='base-url' id='base-url' value=(variables.baseUrl))
+        div.field
+          label Profile Url
+          input(type='text' name='profile-url' id='profile-url' value=(variables.profileUrl))
+        div.field
+          label Streamers Url
+          input(type='text' name='streamers-url' id='streamers-url' value=(variables.streamersUrl))
+        div.field
+          label Chrome Path
+          input(type='text' name='chrome-path' id='chrome-path' value=(variables.chromePath))
+        div.field
+          label User Agent
+          input(type='text' name='user-agent' id='user-agent' value=(variables.userAgent))
+        div.field
+          div.ui.toggle.checkbox(id='fixed-stream' onChange='checkIfFixedStreamIsChecked()')
+            input(type='checkbox' tabindex='0' class='checked')
+            label Fixed Stream
+        div.field
+          label Fixed Stream Name
+          input(type='text' name='fixed-stream-name' id='fixed-stream-name' value=(variables.fixedStreamName))
+        div.field
+          div.ui.toggle.checkbox(id='follow-channels')
+            input(type='checkbox' tabindex='0' class='checked')
+            label Follow Channels
+        div.field
+          div.ui.toggle.checkbox(id='low-audio')
+            input(type='checkbox' tabindex='0' class='checked')
+            label Low Audio
+        div.field
+          div.ui.toggle.checkbox(id='enable-db')
+            input(type='checkbox' tabindex='0' class='checked')
+            label Enable Database
+        div.ui.divider
+        div.ui.buttons(style='margin-bottom: 5px')
+          button.ui.primary.button(type='button' id='save-changes' onclick='saveChanges()') Save Changes
+          div.or
+          button.ui.red.button(type='button' onclick='resetChanges()') Reset
+  include scripts/config.js.pug

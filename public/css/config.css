@@ -1,0 +1,15 @@
+@import "https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.4.1/semantic.min.css";
+@import "toastr.min.css";
+
+body {
+  background-color: #eaeef2;
+}
+
+.ui .container .main {
+  padding-top: 15px;
+}
+
+#save-changes {
+  min-width: 130px;
+  min-height: 37px;
+}

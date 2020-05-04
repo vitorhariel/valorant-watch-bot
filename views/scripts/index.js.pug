@@ -1,0 +1,267 @@
+script(src='js/toastr.min.js')
+script.
+  var socket = io();
+  let status;
+  let updateTime = moment();
+  let loading_screenshot = false;
+  let loading_delete = false;
+  let loading_skip = false;
+  const ps = new PerfectScrollbar('#logs-container');
+  moment.relativeTimeThreshold('ss', 1);
+  MicroModal.init();
+
+  moment.fn.fromNowOrNow = function (a) {
+    if (Math.abs(moment().diff(this)) < 1000) {
+      return 'just now';
+    }
+    return this.fromNow(a);
+  }
+
+  function getLog() {
+    $.ajax({
+      url: './app.log',
+      dataType: 'text',
+      success: function(text) {
+        $("#logs-text").text(text.split('\n').reverse().join('\n').trim());
+        setTimeout(getLog, 1000);
+      }
+    })
+  }
+
+  getLog()
+
+  socket.on('connect', () => {
+    if (status) {
+      loading_screenshot = false;
+      loading_delete = false;
+      loading_skip = false;
+      $('#status').html(status);
+    }
+  })
+
+  socket.on('disconnect', () => {
+    $('td[name="token"]').each((index, elem) => {
+      $(elem).parent().remove();
+    });
+
+    if ($('#table_status').length) {
+      $('#table_status').remove();
+    }
+
+    const row = $('<tr id="table_status"></tr>');
+    row.append('<td colspan="6">Waiting...</td>');
+    $('tbody').append(row);
+    status = $('#status').html();
+    $('#status').html('Disconnected');
+  })
+
+  socket.on('update', ({ table }) => {
+    updateTime = moment();
+    updateTimeString();
+
+    if ($('#table_status').length) {
+      $('#table_status').remove();
+    }
+
+    if (!table.length && !($('[id^="id"]').length)) {
+      const row = $('<tr id="table_status"></tr>');
+      row.append('<td colspan="6">Waiting...</td>');
+      $('tbody').append(row);
+    } else if (table.length) {
+      const loading = $('#table_status');
+      if (loading) {
+        loading.remove();
+      }
+    }
+
+    for (i in table) {
+      if (!isNaN(i)) {
+        const token = table[i][1];
+        const found = ($(`td:contains(${token})`));
+
+        if (found.length) {
+          const parentTr = found.parent();
+          $(parentTr).find('td[name="name"]').html(table[i][0]);
+          $(parentTr).find('td[name="token"]').html(table[i][1]);
+          $(parentTr).find('td[name="next"]').html(table[i][2]);
+          $(parentTr).find('td[name="watching"]').html(table[i][3]);
+          $(parentTr).find('td[name="gotkey"]').html(table[i][4]);
+        } else {
+          const row = $(`<tr id="id_${i}"></tr>`);
+          row.append(`<td name="name">${table[i][0]}</td>`);
+          row.append(`<td name="token">${table[i][1]}</td>`);
+          row.append(`<td name="next">${table[i][2]}</td>`);
+          row.append(`<td name="watching">${table[i][3]}</td>`);
+          row.append(`<td name="gotkey">${table[i][4]}</td>`);
+          const actions = $(`<td name="action-${table[i][1]}"></td>`);
+          actions.append(`<i class="circular inverted link camera icon" onclick="requestScreenshot('${table[i][1]}')" name="request_screenshot"></i>`);
+          actions.append(`<i class="circular inverted link forward icon" onclick="requestSkipStreamer('${table[i][1]}')" name="request_skip_streamer"></i>`);
+          //- actions.append(`<i class="circular inverted link redo icon" onclick="requestRefreshInstance('${table[i][1]}')" name="request_refresh_instance"></i>`);
+          actions.append(`<i class="circular inverted link stop red icon" onclick="requestDelete('${table[i][1]}')" name="request_delete"></i>`);
+          row.append(actions);
+          $('tbody').append(row);
+        }
+      }
+    }
+
+    $('td[name="token"]').each((index, elem) => {
+      for (i in table) {
+        if (!isNaN(i) && table[i][1] === $(elem).html()) {
+          return false;
+        }
+          $(elem).parent().remove();
+      }
+    });
+
+    checkIfGotKey();
+  });
+
+  socket.on('restarting', () => {
+    toastr.info("Restarting...");
+    $('td[name="token"]').each((index, elem) => {
+      $(elem).parent().remove();
+    });
+
+    if ($('#table_status').length) {
+      $('#table_status').remove();
+    }
+
+    const row = $('<tr id="table_status"></tr>');
+    row.append('<td colspan="4">Restarting...</td>');
+    $('tbody').append(row);
+  })
+
+  socket.on('deliver_screenshot', ({screenshot_id, token}) => {
+    $('#modal-screenshot-image').attr("src", `./screenshots/${screenshot_id}.png?t=${new Date().getTime()}`);
+    $('#modal-screenshot-newtab').attr("href", `./screenshots/${screenshot_id}.png`);
+    MicroModal.show('modal-screenshot');
+
+    const icon = $(`td[name="action-${token}"] > i[name*="request_screenshot"]`);
+    icon.removeClass('spinner loading');
+    icon.addClass('camera');
+    loading_screenshot = false;
+  })
+
+  socket.on('deliver_skip_streamer', ({token, username}) => {
+    toastr.success(`${username} skipped the streamer`)
+
+    const icon = $(`td[name="action-${token}"] > i[name*="request_skip_streamer"]`);
+    icon.removeClass('spinner loading');
+    icon.addClass('forward');
+    loading_skip = false;
+  });
+
+  socket.on('deliver_delete', (token) => {
+    $('td[name="token"]').each((i, element) => {
+      if (element.textContent === token) {
+        const username = $(element).parent().children('td[name="name"]').text();
+        if (username) {
+          toastr.success(`${username} was disabled`);
+        } else {
+          toastr.success(`${token} was disabled`);
+        }
+
+        $(element).parent().remove();
+        loading_delete = false;
+      }
+    })
+  })
+
+  socket.on('browser_disconnected', (token) => {
+    toastr.error(`${token} was disconnected...`);
+  })
+
+
+  function reload() {
+    toastr.info(`Reloading...`);
+    socket.emit('request_update');
+  }
+
+  function restart() {
+    const confirmed = confirm('Are you sure you want to restart the bot? This may cause some issues.\n\nConsider waiting for all accounts to be running.');
+    if (confirmed) {
+      $('td[name="token"]').each((index, elem) => {
+        $(elem).parent().remove();
+      });
+      socket.emit('request_restart');
+    }
+  }
+
+  function addAccount() {
+    const authTokenInput = $('#auth-token');
+    const authTokenInputVal = authTokenInput.val();
+
+    if (authTokenInputVal.length !== 30) {
+      $('#auth-token-div').addClass('error');
+    } else {
+      toastr.info("Adding new account...");
+      authTokenInput.val('');
+      socket.emit('add_account', authTokenInputVal);
+    }
+  }
+
+  function requestScreenshot(token) {
+    if (!loading_screenshot) {
+      toastr.info("Requesting screenshot...");
+      loading_screenshot = true;
+      socket.emit('request_screenshot', token);
+
+      const icon = $(`td[name="action-${token}"] > i[name*="request_screenshot"]`);
+      icon.addClass('spinner loading');
+      icon.removeClass('camera');
+    }
+  }
+
+  function requestSkipStreamer(token) {
+    const confirmed = confirm('Are you sure you want to skip the current streamer?');
+    if (confirmed) {
+      if (!loading_skip) {
+        toastr.info("Requesting skip...");
+        loading_skip = true;
+        socket.emit('request_skip_streamer', token);
+
+        const icon = $(`td[name="action-${token}"] > i[name*="request_skip_streamer"]`);
+        icon.addClass('spinner loading');
+        icon.removeClass('forward');
+      }
+    }
+  }
+
+  function requestDelete(token) {
+    const confirm = prompt('Are you sure you want to disable this account?\n\nType "YES" in the box bellow:');
+    if (confirm === 'YES') {
+      toastr.info("Deleting account...");
+      if (!loading_delete) {
+        loading_delete = true;
+        socket.emit('request_delete', token);
+
+        const icon = $(`td[name="action-${token}"] > i[name*="request_delete"]`);
+        icon.addClass('spinner loading');
+        icon.removeClass('stop');
+      }
+    }
+  }
+
+  $("#auth-token-div").focusin(() => {
+    $('#auth-token-div').removeClass('error');
+  });
+
+  function updateTimeString() {
+    $('#time').html(moment(updateTime).fromNowOrNow());
+  }
+
+  function checkIfGotKey() {
+    $('td[name="gotkey"]').each((i, element) => {
+      if (element.textContent === 'YES!') {
+        const keyStatus = $('<i class="check icon"></i>')
+        $(element).html(keyStatus);
+      } else if (element.textContent === 'Not yet') {
+        const keyStatus = $('<i class="close icon"></i>')
+        $(element).html(keyStatus);
+      }
+    })
+  }
+
+  setInterval(() => {
+    updateTimeString();
+  }, 1000)

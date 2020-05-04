@@ -1,0 +1,47 @@
+@import "https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.4.1/semantic.min.css";
+@import "micromodal.css";
+@import "toastr.min.css";
+@import "perfect-scrollbar.css";
+
+body {
+  background-color: #eaeef2;
+}
+
+.ui .container .main {
+  padding-top: 15px;
+}
+
+.table-bottom {
+  display: flex;
+  justify-content: space-between;
+  justify-items: center;
+  align-items: center;
+}
+
+.bottom-container {
+  display: flex;
+}
+
+.bottom-container .logs-div {
+  margin: 0 0 0 10px;
+  width: 100%;
+}
+
+.newacc-div {
+  height: 100%;
+}
+
+@media only screen and (max-width: 600px) {
+  .bottom-container {
+    flex-direction: column;
+  }
+
+  .newacc-div {
+    margin: 0 !important;
+  }
+
+  .bottom-container .logs-div {
+    margin: 0;
+    margin-top: 14px;
+  }
+}

@@ -29,7 +29,9 @@ const twitchCookie = {
     db = initiateDb();
     const apiKey = "afa5e6f00afb0ede17af5979c863335e";
     const password = "Supremo0@";
-    const data = {};
+    const data = {
+      region: "NA1",
+    };
 
     const randomUser = faker
       .fake("{{internet.userName}}{{random.number}}")
@@ -39,12 +41,7 @@ const twitchCookie = {
     data.email = `${randomUser}@valorantgamer.club`;
     data.password = password;
 
-    const riotData = {
-      ...data,
-      region: "NA1",
-    };
-
-    const riotAccount = await newRiot(apiKey, riotData);
+    const riotAccount = await newRiot(apiKey, data);
 
     if (!riotAccount) {
       throw "Riot account registration error";
@@ -171,12 +168,13 @@ async function newTwitch(apiKey, data, manual) {
       console.log(`Account TWITCH ${twitchResponse.data.access_token} created`);
 
       const stmt = db.prepare(
-        "INSERT INTO twitch(username, password, email, token)VALUES (?, ?, ?, ?)"
+        "INSERT INTO twitch(username, password, email, region, token)VALUES (?, ?, ?, ?, ?)"
       );
       stmt.run(
         data.username,
         data.password,
         data.email,
+        data.region,
         twitchResponse.data.access_token
       );
       return twitchResponse.data.access_token;
@@ -411,7 +409,22 @@ async function confirmLastTwitchAccount() {
                   /(https?:\/\/(.+?\.)?twitch\.tv(\/[A-Za-z0-9\-\._~:\/\?#\[\]@!$&'\(\)\*\+,;\=]*)?)/gim
                 )[1]
                 .slice(0, -1);
-              await axios.get(verify_link);
+              let browser = await puppeteer.launch({
+                headless: false,
+                defaultViewport: null,
+                args: [
+                  "--window-size=350,600",
+                  "--no-sandbox",
+                  "--disable-setuid-sandbox",
+                ],
+              });
+
+              const page = await browser.newPage();
+              await page.setViewport({ width: 350, height: 600 });
+
+              await page.goto(verify_link, {
+                waitUntil: "networkidle0",
+              });
             });
             connection.addFlags(item.attributes.uid, ["\\Seen"], (err) => {
               if (!err) {
