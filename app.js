@@ -43,14 +43,15 @@ const isHeadless = variables.headless;
 const followChannels = variables.followChannels;
 const lowAudio = variables.lowAudio;
 
+let botStarted = false;
 let startTime;
 let updateTimer = -1;
 let lengthAccounts;
 let instances = [];
 let started = [];
+let table = [];
 
 const db = initiateDb();
-const table = [];
 
 let lastTable = JSON.stringify(table);
 let filteredAccounts;
@@ -64,16 +65,32 @@ async function getFilteredAccounts(accountsToFilter) {
 }
 
 async function startBot() {
+  botStarted = true;
   startTime = dayjs();
+  log.info("Starting the bot...");
 
   const filteredAccounts = await getFilteredAccounts(accounts);
+  io.emit("deliver_start");
   startInstances(filteredAccounts);
+}
+
+async function stopBot() {
+  botStarted = false;
+
+  instances.forEach(async (instance) => {
+    await instance.browser().close();
+  });
+  instances = [];
+  table = [];
+
+  log.info("The bot has stopped...");
+  io.emit("deliver_stop");
 }
 
 async function startInstances(accounts) {
   accounts.forEach((account, index) => {
     setTimeout(async () => {
-      if (instances.length < variables.maxInstances) {
+      if (instances.length < variables.maxInstances && botStarted) {
         if (
           !instances.some((i) => i.token === account.token) &&
           started.indexOf(account.token) === -1
@@ -91,113 +108,131 @@ async function startInstances(accounts) {
 }
 
 async function newInstance({ username, token }) {
-  log.info(`Creating instance for ${token}`);
+  if (botStarted) {
+    log.info(`Creating instance for ${token}`);
+  }
 
-  var browser = await puppeteer.launch({
-    headless: isHeadless,
-    defaultViewport: null,
-    args: [
-      "--window-size=1200,820",
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-    ],
-    executablePath: variables.chromePath || null,
-  });
+  try {
+    var browser = await puppeteer.launch({
+      headless: isHeadless,
+      defaultViewport: null,
+      args: [
+        "--window-size=1200,820",
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+      ],
+      executablePath: variables.chromePath || null,
+    });
 
-  browser.on("disconnected", () => {
-    log.info(`Instance ${token} with username ${username} was disconnected`);
-    io.emit("browser_disconnected", token);
-  });
+    browser.on("disconnected", () => {
+      log.info(`Instance ${token} with username ${username} was disconnected`);
+      io.emit("browser_disconnected", token);
+    });
 
-  const page = await browser.newPage();
-  await page.setViewport({ width: 1200, height: 820 });
-  await page.setUserAgent(variables.userAgent);
-  const cookie = { ...twitchCookie, value: token };
-  await page.setCookie(cookie);
-  page.username = username;
-  page.token = token;
-  return page;
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1200, height: 820 });
+    await page.setUserAgent(variables.userAgent);
+    const cookie = { ...twitchCookie, value: token };
+    await page.setCookie(cookie);
+    page.username = username;
+    page.token = token;
+    return page;
+  } catch (error) {
+    handleError(error);
+  }
 }
 
 async function checkLogin(instance) {
-  log.info(`Checking login for ${instance.token}`);
-
-  await instance
-    .goto(variables.profileUrl, {
-      waitUntil: "networkidle0",
-      timeout: 0,
-    })
-    .catch(() => {});
-
-  const bodyHTML = await instance.evaluate(() => document.body.innerHTML);
-  const $ = cheerio.load(bodyHTML);
-  const username = $(
-    'div[data-a-target="profile-username-input"] > input'
-  ).val();
-
-  const accountFileIndex = accounts.findIndex((account) => {
-    return account.token === instance.token;
-  });
-
-  if (!instance.username && username) {
-    if (accountFileIndex !== -1) {
-      accounts[accountFileIndex].username = username;
-      accounts[accountFileIndex].disabled = false;
-      instance.username = username;
-      instance.valid = true;
-    } else {
-      log.info(
-        `Saving new user ${instance.token} with username ${
-          instance.username || username
-        }`
-      );
-      const newAccount = {
-        username,
-        token: instance.token,
-        disabled: false,
-      };
-      accounts.push(newAccount);
-      instance.username = username;
-    }
-
-    table.push([username, instance.token, "", "", ""]);
-  } else if (!username) {
-    log.warn(`Token ${token} is invalid`);
-    instance.invalid = true;
-    table.push(["invalid", instance.token, "", "", "is invalid"]);
-  } else {
-    accounts[accountFileIndex].disabled = false;
-    table.push([username, instance.token, "", "", ""]);
+  if (botStarted) {
+    log.info(`Checking login for ${instance.token}`);
   }
 
-  fs.writeFile(
-    "./config/accounts.json",
-    JSON.stringify(accounts, null, 2),
-    () => {}
-  );
+  try {
+    await instance
+      .goto(variables.profileUrl, {
+        waitUntil: "networkidle0",
+        timeout: 0,
+      })
+      .catch(() => {});
+
+    const bodyHTML = await instance.evaluate(() => document.body.innerHTML);
+    const $ = cheerio.load(bodyHTML);
+    const username = $(
+      'div[data-a-target="profile-username-input"] > input'
+    ).val();
+
+    const accountFileIndex = accounts.findIndex((account) => {
+      return account.token === instance.token;
+    });
+
+    if (!instance.username && username) {
+      if (accountFileIndex !== -1) {
+        accounts[accountFileIndex].username = username;
+        accounts[accountFileIndex].disabled = false;
+        instance.username = username;
+        instance.valid = true;
+      } else {
+        log.info(
+          `Saving new user ${instance.token} with username ${
+            instance.username || username
+          }`
+        );
+        const newAccount = {
+          username,
+          token: instance.token,
+          disabled: false,
+        };
+        accounts.push(newAccount);
+        instance.username = username;
+      }
+
+      table.push([username, instance.token, "", "", ""]);
+    } else if (!username) {
+      log.warn(`Token ${token} is invalid`);
+      instance.invalid = true;
+      table.push(["invalid", instance.token, "", "", "is invalid"]);
+    } else {
+      accounts[accountFileIndex].disabled = false;
+      table.push([username, instance.token, "", "", ""]);
+    }
+
+    fs.writeFile(
+      "./config/accounts.json",
+      JSON.stringify(accounts, null, 2),
+      () => {}
+    );
+  } catch (error) {
+    handleError(error);
+  }
 }
 
 async function getStreamers(instance) {
-  log.info(`[${instance.username}] going to streamers page`);
-
-  await instance
-    .goto(variables.streamersUrl, {
-      waitUntil: "networkidle0",
-      timeout: 0,
-    })
-    .catch(() => {});
-
-  const bodyHTML = await instance
-    .evaluate(() => document.body.innerHTML)
-    .catch(() => {});
-  const $ = cheerio.load(bodyHTML);
-  const jquery = $('a[data-test-selector*="ChannelLink"]');
-
-  const streamers = new Array();
-  for (var i = 0; i < jquery.length; i++) {
-    streamers[i] = jquery[i].attribs.href.split("/")[1];
+  if (botStarted) {
+    log.info(`[${instance.username}] going to streamers page`);
   }
-  return streamers;
+
+  try {
+    await instance
+      .goto(variables.streamersUrl, {
+        waitUntil: "networkidle0",
+        timeout: 0,
+      })
+      .catch(() => {});
+
+    const bodyHTML = await instance
+      .evaluate(() => document.body.innerHTML)
+      .catch(() => {});
+    const $ = cheerio.load(bodyHTML);
+    const jquery = $('a[data-test-selector*="ChannelLink"]');
+
+    const streamers = new Array();
+    for (var i = 0; i < jquery.length; i++) {
+      streamers[i] = jquery[i].attribs.href.split("/")[1];
+    }
+    return streamers;
+  } catch (error) {
+    handleError(error);
+  }
 }
 
 async function selectStreamer(instance, streamers) {
@@ -236,7 +271,10 @@ async function selectStreamer(instance, streamers) {
 
         let next_streamer = dayjs().add(minute, "minute").format("HH:mm:ss");
 
-        log.info(`[${instance.username}] selecting streamer ${watching}`);
+        if (botStarted) {
+          log.info(`[${instance.username}] selecting streamer ${watching}`);
+        }
+
         await instance
           .goto(variables.baseUrl + watching, { timeout: 0 })
           .catch(() => {});
@@ -255,7 +293,10 @@ async function selectStreamer(instance, streamers) {
           )
           .catch(() => {});
 
-        log.info(`[${instance.username}] checking for drop`);
+        if (botStarted) {
+          log.info(`[${instance.username}] checking for drop`);
+        }
+
         await btnNotification
           .evaluate((btn) => {
             btn.click();
@@ -327,58 +368,64 @@ async function selectStreamer(instance, streamers) {
 }
 
 async function setLowestQuality(instance) {
-  const btnFollow = await instance.$('button[data-a-target="follow-button"]');
-  if (btnFollow && followChannels && getRandomInt(0, 10) % 2 === 0) {
-    log.info(`[${instance.username}] following streamer ${instance.watching}`);
-    await btnFollow.evaluate((btn) => btn.click());
+  try {
+    const btnFollow = await instance.$('button[data-a-target="follow-button"]');
+    if (btnFollow && followChannels && getRandomInt(0, 10) >= 8) {
+      log.info(
+        `[${instance.username}] following streamer ${instance.watching}`
+      );
+      await btnFollow.evaluate((btn) => btn.click());
+    }
+
+    if (lowAudio) {
+      instance.$eval("video", (video) => {
+        setInterval(function () {
+          if (video.volume !== 0.01) video.volume = 0.01;
+        }, 1000);
+      });
+    }
+
+    const btnMatureAccept = await instance.$(
+      'button[data-a-target="player-overlay-mature-accept"]'
+    );
+    if (btnMatureAccept) {
+      log.info(`[${instance.username}] accepting mature stream warning`);
+
+      await btnMatureAccept.evaluate((btn) => btn.click());
+    }
+
+    log.info(`[${instance.username}] setting lowest quality for stream`);
+    await instance
+      .$('button[data-a-target="player-settings-button"]')
+      .then((btn) =>
+        btn.evaluate((btn) => {
+          btn.click();
+        })
+      )
+      .catch((err) => {});
+
+    await instance
+      .$('button[data-a-target="player-settings-menu-item-quality"]')
+      .then((btn) =>
+        btn.evaluate((btn) => {
+          btn.click();
+        })
+      )
+      .catch((err) => {});
+
+    await instance
+      .$(
+        'div[data-a-target="player-settings-menu"] > div.tw-pd-05:last-child input'
+      )
+      .then((btn) =>
+        btn.evaluate((btn) => {
+          btn.click();
+        })
+      )
+      .catch((err) => {});
+  } catch (error) {
+    handleError(error);
   }
-
-  if (lowAudio) {
-    instance.$eval("video", (video) => {
-      setInterval(function () {
-        if (video.volume !== 0.01) video.volume = 0.01;
-      }, 1000);
-    });
-  }
-
-  const btnMatureAccept = await instance.$(
-    'button[data-a-target="player-overlay-mature-accept"]'
-  );
-  if (btnMatureAccept) {
-    log.info(`[${instance.username}] accepting mature stream warning`);
-
-    await btnMatureAccept.evaluate((btn) => btn.click());
-  }
-
-  log.info(`[${instance.username}] setting lowest quality for stream`);
-  await instance
-    .$('button[data-a-target="player-settings-button"]')
-    .then((btn) =>
-      btn.evaluate((btn) => {
-        btn.click();
-      })
-    )
-    .catch((err) => {});
-
-  await instance
-    .$('button[data-a-target="player-settings-menu-item-quality"]')
-    .then((btn) =>
-      btn.evaluate((btn) => {
-        btn.click();
-      })
-    )
-    .catch((err) => {});
-
-  await instance
-    .$(
-      'div[data-a-target="player-settings-menu"] > div.tw-pd-05:last-child input'
-    )
-    .then((btn) =>
-      btn.evaluate((btn) => {
-        btn.click();
-      })
-    )
-    .catch((err) => {});
 }
 
 function addAccount(token) {
@@ -406,93 +453,109 @@ function restartBot() {
 }
 
 async function screenshot(token) {
-  const accountTableIndex = instances.findIndex(
-    (instance) => instance.token === token
-  );
+  try {
+    const accountTableIndex = instances.findIndex(
+      (instance) => instance.token === token
+    );
 
-  const screenshot_id = token;
-  const path = `public/screenshots/${screenshot_id}.png`;
+    const screenshot_id = token;
+    const path = `public/screenshots/${screenshot_id}.png`;
 
-  log.info(`[${instances[accountTableIndex].username}] taking screenshot`);
-  fs.unlink(path, async (err) => {
-    await instances[accountTableIndex]
-      .screenshot({
-        path,
-      })
-      .then(() => io.emit("deliver_screenshot", { screenshot_id, token }));
-  });
+    log.info(`[${instances[accountTableIndex].username}] taking screenshot`);
+    fs.unlink(path, async (err) => {
+      await instances[accountTableIndex]
+        .screenshot({
+          path,
+        })
+        .then(() => io.emit("deliver_screenshot", { screenshot_id, token }));
+    });
+  } catch (error) {
+    handleError(error);
+  }
 }
 
 async function skipStreamer(token) {
-  const accountTableIndex = instances.findIndex(
-    (instance) => instance.token === token
-  );
+  try {
+    const accountTableIndex = instances.findIndex(
+      (instance) => instance.token === token
+    );
 
-  instances[accountTableIndex].forceSkipStreamer();
+    instances[accountTableIndex].forceSkipStreamer();
 
-  setTimeout(() => {
-    io.emit("deliver_skip_streamer", {
-      token,
-      username: instances[accountTableIndex].username,
-    });
-  }, 1500);
+    setTimeout(() => {
+      io.emit("deliver_skip_streamer", {
+        token,
+        username: instances[accountTableIndex].username,
+      });
+    }, 1500);
+  } catch (error) {
+    handleError(error);
+  }
 }
 
 async function deleteAccount(token, noDisable) {
-  const accountFileIndex = accounts.findIndex((account) => {
-    return account.token === token;
-  });
+  try {
+    const accountFileIndex = accounts.findIndex((account) => {
+      return account.token === token;
+    });
 
-  const accountInstanceIndex = instances.findIndex(
-    (instance) => instance.token === token
-  );
-
-  if (noDisable) {
-    log.info(
-      `Closing account ${token} with username ${
-        instances[accountInstanceIndex].username
-          ? instances[accountFileIndex].username
-          : null
-      } due to limit`
+    const accountInstanceIndex = instances.findIndex(
+      (instance) => instance.token === token
     );
-  } else {
-    accounts[accountFileIndex].disabled = true;
 
-    log.info(
-      `Disabling account ${token} with username ${
-        instances[accountInstanceIndex].username
-          ? instances[accountFileIndex].username
-          : null
-      }`
+    if (noDisable) {
+      log.info(
+        `Closing account ${token} with username ${
+          instances[accountInstanceIndex].username
+            ? instances[accountFileIndex].username
+            : null
+        } due to limit`
+      );
+    } else {
+      accounts[accountFileIndex].disabled = true;
+
+      log.info(
+        `Disabling account ${token} with username ${
+          instances[accountInstanceIndex].username
+            ? instances[accountFileIndex].username
+            : null
+        }`
+      );
+    }
+
+    fs.writeFile(
+      "./config/accounts.json",
+      JSON.stringify(accounts, null, 2),
+      () => {}
     );
+
+    await instances[accountInstanceIndex].browser().close();
+    instances.splice(accountInstanceIndex, 1);
+    table.splice(accountInstanceIndex, 1);
+    lengthAccounts -= 1;
+    io.emit("deliver_delete", token);
+  } catch (error) {
+    handleError(error);
   }
-
-  fs.writeFile(
-    "./config/accounts.json",
-    JSON.stringify(accounts, null, 2),
-    () => {}
-  );
-
-  await instances[accountInstanceIndex].browser().close();
-  instances.splice(accountInstanceIndex, 1);
-  table.splice(accountInstanceIndex, 1);
-  lengthAccounts -= 1;
-  io.emit("deliver_delete", token);
 }
 
 async function saveChanges(data) {
-  variables = {
-    headless: variables.headless,
-    ...data,
-  };
+  try {
+    variables = {
+      headless: variables.headless,
+      ...data,
+    };
 
-  fs.writeFile(
-    "./config/variables.json",
-    JSON.stringify(variables, null, 2),
-    () => {}
-  );
+    fs.writeFile(
+      "./config/variables.json",
+      JSON.stringify(variables, null, 2),
+      () => {}
+    );
 
-  io.emit("deliver_config_changes");
+    io.emit("deliver_config_changes");
+  } catch (error) {
+    handleError(error);
+  }
 }
 
 async function checkIfMoreInstancesThanMaximum() {
@@ -503,11 +566,23 @@ async function checkIfMoreInstancesThanMaximum() {
   }
 }
 
+function handleError(error) {
+  switch (error.message) {
+    case "Cannot read property 'parent' of undefined":
+      break;
+    case "Protocol error (Runtime.callFunctionOn): Session closed. Most likely the page has been closed.":
+      break;
+    default:
+      log.error(error.message);
+  }
+}
+
 setInterval(async () => {
   if (
-    JSON.stringify(table) !== lastTable ||
-    (updateTimer >= 60 && table.length > 0) ||
-    updateTimer === -1
+    (JSON.stringify(table) !== lastTable ||
+      (updateTimer >= 60 && table.length > 0) ||
+      updateTimer === -1) &&
+    botStarted
   ) {
     io.emit("update", {
       table,
@@ -528,13 +603,23 @@ setInterval(async () => {
 }, 1000);
 
 io.on("connection", (socket) => {
+  socket.emit("first_update", { started: botStarted });
+
+  socket.on("request_start", () => {
+    startBot();
+  });
+
+  socket.on("request_stop", () => {
+    stopBot();
+  });
+
   socket.emit("update", {
-    table: table.length >= 1 ? table : [],
+    table,
   });
 
   socket.on("request_update", () => {
     socket.emit("update", {
-      table: table.length >= 1 ? table : [],
+      table,
     });
   });
 
@@ -574,6 +659,5 @@ router.get("/config", (req, res) => {
 
 log.info("Listening on http://localhost:3000");
 
-startBot();
 app.use(router);
 server.listen(3000);

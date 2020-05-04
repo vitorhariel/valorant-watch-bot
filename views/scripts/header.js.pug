@@ -1,0 +1,73 @@
+script.
+  let botStarted;
+  let page = '#{name}';
+
+  socket.on('first_update', ({started}) => {
+    botStarted = started;
+
+    if (botStarted) {
+      setButtonStop();
+    } else {
+      setButtonStart();
+    }
+  })
+
+  socket.on('disconnect', () => {
+    setButtonStart();
+  });
+
+  socket.on('deliver_start', () => {
+    setButtonStop();
+
+    toastr.success('The bot has started...')
+    botStarted = true;
+  });
+
+  socket.on('deliver_stop', () => {
+    setButtonStart();
+
+    if(page === 'index') {
+      $('td[name="token"]').each((index, elem) => {
+        $(elem).parent().remove();
+      });
+
+      $('tr#table_status').remove();
+
+      const row = $('<tr id="table_status"></tr>');
+      row.append('<td colspan="6">Waiting...</td>');
+      $('tbody').append(row);
+    }
+
+    toastr.success('The bot has stopped...')
+    botStarted = false;
+  });
+
+  function requestStartBot() {
+    socket.emit('request_start')
+    $('#start-bot > i').removeClass('play').addClass('spinner loading');
+  }
+
+  async function requestStopBot() {
+    socket.emit('request_stop');
+    $('#start-bot > i').removeClass('stop').addClass('spinner loading');
+  }
+
+  function setButtonStart() {
+    botStarted = false;
+    $('#start-bot > i').addClass('play').removeClass('stop spinner loading');
+    $('#start-bot > span').html('Start Bot');
+  }
+
+  function setButtonStop() {
+    botStarted = true;
+    $('#start-bot > i').addClass('stop').removeClass('play spinner loading');
+    $('#start-bot > span').html('Stop Bot');
+  }
+
+  $('#start-bot').parent().on('click', () => {
+    if (botStarted) {
+      requestStopBot();
+    } else {
+      requestStartBot();
+    }
+  })

@@ -5,7 +5,7 @@
 *.db
 public/screenshots/
 config/accounts.json
-config/variables.js
+config/variables.json
 
 ### Node ###
 # Logs

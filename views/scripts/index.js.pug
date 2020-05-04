@@ -39,6 +39,7 @@ script.
     }
   })
 
+
   socket.on('disconnect', () => {
     $('td[name="token"]').each((index, elem) => {
       $(elem).parent().remove();
@@ -55,7 +56,7 @@ script.
     $('#status').html('Disconnected');
   })
 
-  socket.on('update', ({ table }) => {
+  socket.on('update', ({ table, started }) => {
     updateTime = moment();
     updateTimeString();
 
@@ -137,8 +138,7 @@ script.
     MicroModal.show('modal-screenshot');
 
     const icon = $(`td[name="action-${token}"] > i[name*="request_screenshot"]`);
-    icon.removeClass('spinner loading');
-    icon.addClass('camera');
+    icon.removeClass('spinner loading').addClass('camera');;
     loading_screenshot = false;
   })
 
@@ -146,8 +146,7 @@ script.
     toastr.success(`${username} skipped the streamer`)
 
     const icon = $(`td[name="action-${token}"] > i[name*="request_skip_streamer"]`);
-    icon.removeClass('spinner loading');
-    icon.addClass('forward');
+    icon.removeClass('spinner loading').addClass('forward');;
     loading_skip = false;
   });
 
@@ -168,7 +167,9 @@ script.
   })
 
   socket.on('browser_disconnected', (token) => {
-    toastr.error(`${token} was disconnected...`);
+    if (botStarted) {
+      toastr.error(`${token} was disconnected...`);
+    }
   })
 
 
@@ -207,9 +208,8 @@ script.
       socket.emit('request_screenshot', token);
 
       const icon = $(`td[name="action-${token}"] > i[name*="request_screenshot"]`);
-      icon.addClass('spinner loading');
-      icon.removeClass('camera');
-    }
+      icon.addClass('spinner loading').removeClass('camera');
+    };
   }
 
   function requestSkipStreamer(token) {
@@ -221,8 +221,7 @@ script.
         socket.emit('request_skip_streamer', token);
 
         const icon = $(`td[name="action-${token}"] > i[name*="request_skip_streamer"]`);
-        icon.addClass('spinner loading');
-        icon.removeClass('forward');
+        icon.addClass('spinner loading').removeClass('forward');;
       }
     }
   }
@@ -236,8 +235,7 @@ script.
         socket.emit('request_delete', token);
 
         const icon = $(`td[name="action-${token}"] > i[name*="request_delete"]`);
-        icon.addClass('spinner loading');
-        icon.removeClass('stop');
+        icon.addClass('spinner loading').removeClass('stop');;
       }
     }
   }
